@@ -28,8 +28,94 @@ static void AllegroTimerSpeedController(){allegroTimerSpeedCounter++;}END_OF_FUN
 enum AIActionName
 {
 	AI_DoConvergence,
+	AI_DoEvasion,
 	AI_DoNothing
 };
+
+////////////////////////////////////////////////////////////////////////////////
+
+/*
+	the combat entity has several properties that will determine its
+	overall performance in combat.
+	
+	combatExperience_ is the number of targets that the combat entity has neutralized
+	
+	strenth_ is the amount of damage the combat entity can deal out
+	
+	health_ is the amount of damage that the combat entity can take before it is killed
+	
+	shield_ is the amount of damage that the combat entity can take before its health will be touched
+	
+*/
+class CombatEntityProperties
+{
+public:
+	// constructor
+	CombatEntityProperties()
+	{
+		this->Zero();
+	}
+	
+	// destructor
+	~CombatEntityProperties()
+	{
+		this->Zero();
+	}
+	
+	// setters
+	void SetCombatExperience(int amount = 0) 		{ combatExperience_ = amount; }
+	void SetStrength(int amount = 0) 				{ strength_ = amount; }
+	void SetHealth(int amount = 0) 					{ health_ = amount; }
+	void SetShield(int amount = 0) 					{ shield_ = amount; }
+	
+	// incrementers
+	void IncreaseCombatExperience(int amount = 1) 	{ combatExperience_ += amount; }
+	void IncreaseStrength(int amount = 1) 			{ strength_ += amount; }
+	void IncreaseHealth(int amount = 1) 			{ health_ += amount; }
+	void IncreaseShield(int amount = 1) 			{ shield_ += amount; }
+	
+	// decrementers
+	void DecreaseCombatExperience(int amount = 1) 	{ combatExperience_ -= amount; }
+	void DecreaseStrength(int amount = 1) 			{ strength_ -= amount; }
+	void DecreaseHealth(int amount = 1) 			{ health_ -= amount; }
+	void DecreaseShield(int amount = 1) 			{ shield_ -= amount; }
+	
+	// getters
+	int GetCombatExperience() const 				{ return combatExperience_; }
+	int GetStrength() const 						{ return strength_; }
+	int GetHealth() const 							{ return health_; }
+	int GetShield() const 							{ return shield_; }
+	
+	// adds the inheritable properties of the parent to this entity
+	void InheritProperties(const CombatEntityProperties& parent)
+	{
+		this->IncreaseStrength(parent.strength_);
+	}
+	
+	// clones the properties of the source entity to this entity
+	void Clone(const CombatEntityProperties& source)
+	{
+		this->SetCombatExperience(source.combatExperience_);
+		this->SetStrength(source.strength_);
+		this->SetHealth(source.health_);
+		this->SetShield(source.shield_);
+	}
+	
+	// clears all properties to the lowest values
+	void Zero()
+	{
+		this->SetCombatExperience();
+		this->SetStrength();
+		this->SetHealth();
+		this->SetShield();
+	}
+	
+private:
+	int combatExperience_;
+	int strength_;
+	int health_;
+	int shield_;
+}; // end class
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -37,22 +123,30 @@ class CombatEntity
 {
 public:
 	CombatEntity() :
+	
 		color_(0),
 		x_(0),
 		y_(0),
 		width_(8),
-		height_(8),
+		height_(16),
+
+		ai_(AI_DoNothing),		
 		isTargeted_(false),
-		ai_(AI_DoNothing)
-		{}
-	virtual ~CombatEntity(){}
+		isNeutralized_(false),
+		isWithinRangeOfTargetEntity_(false),
+		targetEntity_(0)
+		
+	{
+	}
+	
+	virtual ~CombatEntity()
+	{
+	}
+	
 	virtual void Update() = 0;
 	virtual void Render(BITMAP* target) = 0;
 	
-	virtual void AIAction(AIActionName action, int x, int y) = 0;
 	
-	virtual void Target(bool targeted = true) { isTargeted_ = targeted; }
-	bool IsTargeted() const { return isTargeted_; }
 	
 	void SetColor(int color) { color_ = color; }
 	void SetPosition(int x, int y) { x_ = x; y_ = y; }
@@ -66,14 +160,37 @@ public:
 	void SetAIAction(AIActionName action) { ai_ = action; }
 	AIActionName GetAIAction() const { return ai_; }
 	
+	CombatEntityProperties& GetProperties() { return properties_; }
+	
+	virtual void Target(bool targeted = true) { isTargeted_ = targeted; }
+	bool IsTargeted() const { return isTargeted_; }
+	
+	virtual void Neutralize(bool neutralize = true) { isNeutralized_ = neutralize; }
+	bool IsNeutralized() const { return isNeutralized_; }
+	
+	virtual void WithinRangeOfTargetEntity(bool inRange = true) { isWithinRangeOfTargetEntity_ = inRange; }
+	bool IsWithinRangeOfTargetEntity() const { return isWithinRangeOfTargetEntity_; }
+	
+	virtual void SetTargetEntity(CombatEntity* targetEntity) { targetEntity_ = targetEntity; }
+	CombatEntity* GetTargetEntity() const { return targetEntity_; }
+	
 protected:
+	// positioning and rendering
 	int color_;
 	int x_;
 	int y_;
 	int width_;
 	int height_;
-	bool isTargeted_;
+
+protected:
+	// AI
 	AIActionName ai_;
+	CombatEntityProperties properties_;
+	
+	bool isTargeted_;
+	bool isNeutralized_;
+	bool isWithinRangeOfTargetEntity_;
+	CombatEntity* targetEntity_;
 }; // end class
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -86,6 +203,7 @@ public:
 	void Push(CombatEntity* entity);
 	CombatEntity* operator[](size_t index);
 	size_t Size() const;
+	void Erase(size_t index);
 private:
 	std::vector<CombatEntity*> list_;
 }; // end class
@@ -135,6 +253,18 @@ size_t CombatEntityList::Size() const
 
 ////////////////////////////////////////////////////////////////////////////////
 
+void CombatEntityList::Erase(size_t index)
+{
+	if (list_[index])
+	{
+		delete list_[index];
+		list_[index] = 0;
+	}
+	list_.erase(list_.begin() + index);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 class Commando : public CombatEntity
 {
 public:
@@ -144,7 +274,8 @@ public:
 	virtual void Update();
 	virtual void Render(BITMAP* target);
 	virtual void Target(bool targeted = true);
-	virtual void AIAction(AIActionName action, int x, int y);
+	
+	virtual void SetTargetEntity(CombatEntity* targetEntity);
 private:
 	int aiTargetX_;
 	int aiTargetY_;
@@ -178,9 +309,20 @@ Commando::~Commando()
 
 void Commando::Update()
 {
+	// is this commando dying?
+	if (properties_.GetHealth() <= 0)
+	{
+		// its dead
+		this->Neutralize();
+		return;
+	}
+	
+	
+	
+	// handle the ai
 	switch(ai_)
 	{
-		case AI_DoConvergence:
+		case AI_DoEvasion:
 		{
 			// if the commando has not reached its target
 			if (!reachedAITarget_)
@@ -212,7 +354,96 @@ void Commando::Update()
 				}
 				else
 				{
+					// pick a random point and head that way
+					aiTargetX_ = rand() % SCREEN_W;
+					aiTargetY_ = rand() % SCREEN_H;
+				}
+			}
+		} break;
+		
+		case AI_DoConvergence:
+		{
+			aiTargetX_ = targetEntity_->GetX();
+			aiTargetY_ = targetEntity_->GetY();
+			
+			// if the commando has not reached its target
+			if (!reachedAITarget_)
+			{
+				// if the commando is not close enough to the target
+				if ((abs(x_ - aiTargetX_) + abs(y_ - aiTargetY_)) > (height_ + width_))
+				{
+					// compute deltas
+					// compute unit vector to centroid
+					// scale unit vector for synthesis
+					// compute trajectory vector
+					// apply velocity to position
+					float dx = static_cast<float>(aiTargetX_) - static_cast<float>(x_);
+					float dy = static_cast<float>(aiTargetY_) - static_cast<float>(y_);
+					float length = sqrt(dx * dx + dy * dy);
+			
+					dx /= length;
+					dy /= length;
+					int speed = 1 + rand() % (2 - 1);
+					float velocityX = dx * speed;
+					float velocityY = dy * speed;
+					float x = static_cast<float>(x_);
+					float y = static_cast<float>(y_);
+				
+					x += velocityX;
+					y += velocityY;
+					x_ = static_cast<int>(x);
+					y_ = static_cast<int>(y);
+				}
+				else
+				{
 					reachedAITarget_ = true;
+					
+					
+					// how much are we going to damage the target entity
+					int damage = properties_.GetStrength();
+					
+					// target properties
+					CombatEntityProperties& targetProperties = targetEntity_->GetProperties();
+					
+					// get the target's shield
+					int targetShield = targetProperties.GetShield();
+					
+					// calculate if we will demolish the target's shield
+					int overflow = abs(targetShield - damage);
+					
+					// if we have wiped out the shields
+					if (overflow)
+					{
+						// make sure its zero
+						targetProperties.SetShield(0);
+						
+						// damage the health of the target
+						targetProperties.DecreaseHealth(overflow);
+					}
+					else
+					{
+						// damage the shields of the target
+						targetProperties.DecreaseShield(damage);
+					}
+					
+					// get the target's health
+					int targetHealth = targetProperties.GetHealth();
+					
+					// if the target's health is critical
+					if (targetHealth <= 0)
+					{
+						// we kill it off
+						targetProperties.SetHealth(0);
+						targetEntity_->Neutralize();
+						
+						// advance this commando
+						properties_.IncreaseCombatExperience();
+						properties_.IncreaseStrength();
+						properties_.IncreaseHealth();
+						properties_.IncreaseShield();
+					}
+					
+					// tell the commando to do nothing now
 					this->SetAIAction(AI_DoNothing);
 				}
 			}
@@ -246,6 +477,11 @@ void Commando::Target(bool targeted)
 	if (isTargeted_)
 	{
 		this->SetColor(makecol(255, 255, 0));
+		this->SetAIAction(AI_DoEvasion);
+		
+		// pick a random point and head that way
+		aiTargetX_ = rand() % SCREEN_W;
+		aiTargetY_ = rand() % SCREEN_H;
 	}
 	else
 	{
@@ -253,14 +489,11 @@ void Commando::Target(bool targeted)
 	}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-void Commando::AIAction(AIActionName action, int x, int y)
+void Commando::SetTargetEntity(CombatEntity* targetEntity)
 {
-	this->SetAIAction(action);
-	
-	aiTargetX_ = x;
-	aiTargetY_ = y;
+	CombatEntity::SetTargetEntity(targetEntity);
+	aiTargetX_ = targetEntity->GetX();
+	aiTargetY_ = targetEntity->GetY();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -320,7 +553,15 @@ void Simulator::Update()
 		if (lmbIsDown_)
 		{
 			// click
-			combatEntities_.Push(new Commando(mouse_x, mouse_y));
+			Commando* nextCommando = new Commando(mouse_x, mouse_y);
+			CombatEntityProperties rollOfTheDice;
+			rollOfTheDice.SetCombatExperience(0);
+			rollOfTheDice.SetStrength(10 + rand() % (20 - 10));
+			rollOfTheDice.SetHealth(100 + rand() % (200 - 100));
+			rollOfTheDice.SetShield(100 + rand() % (200 - 100));
+			nextCommando->GetProperties().Clone(rollOfTheDice);
+			combatEntities_.Push(nextCommando);
+			
 			lmbIsDown_ = false;
 		}
 	}
@@ -350,10 +591,9 @@ void Simulator::Update()
 				{
 					continue;
 				}
-				combatEntities_[index]->AIAction(
-					AI_DoConvergence,
-					combatEntities_[commando]->GetX(), 
-					combatEntities_[commando]->GetY());
+				
+				combatEntities_[index]->SetTargetEntity(combatEntities_[commando]);
+				combatEntities_[index]->SetAIAction(AI_DoConvergence);
 			}
 			
 			rmbIsDown_ = false;
@@ -366,7 +606,20 @@ void Simulator::Update()
 	size_t count = combatEntities_.Size();
 	for (size_t index = 0; index < count; index++)
 	{
-		combatEntities_[index]->Update();
+		CombatEntity* entity = combatEntities_[index];
+		if (entity)
+		{
+			// is this entity dead?
+			if (entity->IsNeutralized())
+			{
+				// remove the dead entity from the field
+				combatEntities_.Erase(index);
+				continue;
+			}
+			
+			// update the entity
+			entity->Update();
+		}
 	}
 }
 
@@ -385,9 +638,13 @@ void Simulator::Render(BITMAP* target)
 		CombatEntity* commando = combatEntities_[index];
 		AIActionName ai = commando->GetAIAction();
 		
+		CombatEntityProperties& properties = commando->GetProperties();
+		
 		textprintf_ex(target, font, hudX, hudY + (txtH * index) + (2 * index), txtC, -1,
-		"Commando %d : Pos(%d, %d) Orders: %s", static_cast<int>(index) + 1, commando->GetX(), commando->GetY(),
-			(AI_DoNothing == ai) ? "Do Nothing" : "Converge on Target");
+			"Commando %3d : Pos(%4d, %4d) Orders: %s [HP: %4d SH: %4d STR: %4d XP: %d]", 
+			static_cast<int>(index) + 1, commando->GetX(), commando->GetY(),
+			(AI_DoNothing == ai) ? "Do Nothing" : "Converge on Target",
+			properties.GetHealth(), properties.GetShield(), properties.GetStrength(), properties.GetCombatExperience());
 		
 		combatEntities_[index]->Render(target);
 	}
@@ -412,7 +669,7 @@ int main(int argc, char* argv[])
 	install_mouse();
 	set_color_depth(16);
 	set_gfx_mode(GFX_AUTODETECT_WINDOWED, 800, 600, 0, 0);
-	set_window_title("AI Survival v0.1 - Developed by Richard Marks <ccpsceo@gmail.com>");
+	set_window_title("AI Survival v0.2 - Developed by Richard Marks <ccpsceo@gmail.com>");
 	BITMAP* bb = create_bitmap(SCREEN_W, SCREEN_H);
 	LOCK_FUNCTION(AllegroCloseButtonHandler);
 	LOCK_FUNCTION(AllegroTimerSpeedController);
