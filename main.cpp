@@ -189,7 +189,8 @@ public:
 		width_(8),
 		height_(16),
 
-		ai_(AI_DoNothing),		
+		ai_(AI_DoNothing),
+		aiState_(AI_Idle),		
 		isTargeted_(false),
 		isNeutralized_(false),
 		isWithinRangeOfTargetEntity_(false),
@@ -219,6 +220,9 @@ public:
 	void SetAIAction(AIActionName action) { ai_ = action; }
 	AIActionName GetAIAction() const { return ai_; }
 	
+	void SetAIState(AISituationStateName state) { aiState_ = state; }
+	AISituationStateName GetAIState() const { return aiState_; }
+	
 	CombatEntityProperties& GetProperties() { return properties_; }
 	
 	virtual void Target(bool targeted = true) { isTargeted_ = targeted; }
@@ -244,6 +248,7 @@ protected:
 protected:
 	// AI
 	AIActionName ai_;
+	AISituationStateName aiState_;
 	CombatEntityProperties properties_;
 	
 	bool isTargeted_;
@@ -376,141 +381,184 @@ void Commando::Update()
 		return;
 	}
 	
+	// get the fatigue (this is actually the inverse of fatigue since if its zero then we must rest)
+	int fatigue = properties_.GetFatigue();
 	
-	
-	// handle the ai
-	switch(ai_)
+	if (!fatigue)
 	{
-		case AI_DoEvasion:
-		{
-			// if the commando has not reached its target
-			if (!reachedAITarget_)
-			{
-				// if the commando is not close enough to the target
-				if ((abs(x_ - aiTargetX_) + abs(y_ - aiTargetY_)) > (height_ + width_))
-				{
-					// compute deltas
-					// compute unit vector to centroid
-					// scale unit vector for synthesis
-					// compute trajectory vector
-					// apply velocity to position
-					float dx = static_cast<float>(aiTargetX_) - static_cast<float>(x_);
-					float dy = static_cast<float>(aiTargetY_) - static_cast<float>(y_);
-					float length = sqrt(dx * dx + dy * dy);
-			
-					dx /= length;
-					dy /= length;
-					int speed = 1 + rand() % (2 - 1);
-					float velocityX = dx * speed;
-					float velocityY = dy * speed;
-					float x = static_cast<float>(x_);
-					float y = static_cast<float>(y_);
-				
-					x += velocityX;
-					y += velocityY;
-					x_ = static_cast<int>(x);
-					y_ = static_cast<int>(y);
-				}
-				else
-				{
-					// pick a random point and head that way
-					aiTargetX_ = rand() % SCREEN_W;
-					aiTargetY_ = rand() % SCREEN_H;
-				}
-			}
-		} break;
-		
-		case AI_DoConvergence:
-		{
-			aiTargetX_ = targetEntity_->GetX();
-			aiTargetY_ = targetEntity_->GetY();
-			
-			// if the commando has not reached its target
-			if (!reachedAITarget_)
-			{
-				// if the commando is not close enough to the target
-				if ((abs(x_ - aiTargetX_) + abs(y_ - aiTargetY_)) > (height_ + width_))
-				{
-					// compute deltas
-					// compute unit vector to centroid
-					// scale unit vector for synthesis
-					// compute trajectory vector
-					// apply velocity to position
-					float dx = static_cast<float>(aiTargetX_) - static_cast<float>(x_);
-					float dy = static_cast<float>(aiTargetY_) - static_cast<float>(y_);
-					float length = sqrt(dx * dx + dy * dy);
-			
-					dx /= length;
-					dy /= length;
-					int speed = 1 + rand() % (2 - 1);
-					float velocityX = dx * speed;
-					float velocityY = dy * speed;
-					float x = static_cast<float>(x_);
-					float y = static_cast<float>(y_);
-				
-					x += velocityX;
-					y += velocityY;
-					x_ = static_cast<int>(x);
-					y_ = static_cast<int>(y);
-				}
-				else
-				{
-					reachedAITarget_ = true;
-					
-					
-					// how much are we going to damage the target entity
-					int damage = properties_.GetStrength();
-					
-					// target properties
-					CombatEntityProperties& targetProperties = targetEntity_->GetProperties();
-					
-					// get the target's shield
-					int targetShield = targetProperties.GetShield();
-					
-					// calculate if we will demolish the target's shield
-					int overflow = abs(targetShield - damage);
-					
-					// if we have wiped out the shields
-					if (overflow)
-					{
-						// make sure its zero
-						targetProperties.SetShield(0);
-						
-						// damage the health of the target
-						targetProperties.DecreaseHealth(overflow);
-					}
-					else
-					{
-						// damage the shields of the target
-						targetProperties.DecreaseShield(damage);
-					}
-					
-					// get the target's health
-					int targetHealth = targetProperties.GetHealth();
-					
-					// if the target's health is critical
-					if (targetHealth <= 0)
-					{
-						// we kill it off
-						targetProperties.SetHealth(0);
-						targetEntity_->Neutralize();
-						
-						// advance this commando
-						properties_.IncreaseCombatExperience();
-						properties_.IncreaseStrength();
-						properties_.IncreaseHealth();
-						properties_.IncreaseShield();
-					}
-					
-					// tell the commando to do nothing now
-					this->SetAIAction(AI_DoNothing);
-				}
-			}
-			
-		} break;
-		
-		default: break;
+		// rest
+		this->SetAIState(AI_Resting);
+		return;
 	}
+	else
+	{
+		switch(aiState_)
+		{
+			case AI_Patrolling:
+			case AI_Guarding:
+			case AI_Attacking:
+			case AI_Chasing:
+			case AI_Evading:
+			case AI_Scouting:
+			case AI_Idle:
+			{
+				////////////////////////////////////////////////////////////////
+				// handle the ai
+				switch(ai_)
+				{
+					case AI_DoEvasion:
+					{
+						// if the commando has not reached its target
+						if (!reachedAITarget_)
+						{
+							// if the commando is not close enough to the target
+							if ((abs(x_ - aiTargetX_) + abs(y_ - aiTargetY_)) > (height_ + width_))
+							{
+								// compute deltas
+								// compute unit vector to centroid
+								// scale unit vector for synthesis
+								// compute trajectory vector
+								// apply velocity to position
+								float dx = static_cast<float>(aiTargetX_) - static_cast<float>(x_);
+								float dy = static_cast<float>(aiTargetY_) - static_cast<float>(y_);
+								float length = sqrt(dx * dx + dy * dy);
+			
+								dx /= length;
+								dy /= length;
+								int speed = 1 + rand() % (2 - 1);
+								float velocityX = dx * speed;
+								float velocityY = dy * speed;
+								float x = static_cast<float>(x_);
+								float y = static_cast<float>(y_);
+				
+								x += velocityX;
+								y += velocityY;
+								x_ = static_cast<int>(x);
+								y_ = static_cast<int>(y);
+							}
+							else
+							{
+								// pick a random point and head that way
+								aiTargetX_ = rand() % SCREEN_W;
+								aiTargetY_ = rand() % SCREEN_H;
+							}
+						}
+					} break;
+		
+					case AI_DoConvergence:
+					{
+						aiTargetX_ = targetEntity_->GetX();
+						aiTargetY_ = targetEntity_->GetY();
+			
+						// if the commando has not reached its target
+						if (!reachedAITarget_)
+						{
+							// if the commando is not close enough to the target
+							if ((abs(x_ - aiTargetX_) + abs(y_ - aiTargetY_)) > (height_ + width_))
+							{
+								// compute deltas
+								// compute unit vector to centroid
+								// scale unit vector for synthesis
+								// compute trajectory vector
+								// apply velocity to position
+								float dx = static_cast<float>(aiTargetX_) - static_cast<float>(x_);
+								float dy = static_cast<float>(aiTargetY_) - static_cast<float>(y_);
+								float length = sqrt(dx * dx + dy * dy);
+			
+								dx /= length;
+								dy /= length;
+								int speed = 1 + rand() % (2 - 1);
+								float velocityX = dx * speed;
+								float velocityY = dy * speed;
+								float x = static_cast<float>(x_);
+								float y = static_cast<float>(y_);
+				
+								x += velocityX;
+								y += velocityY;
+								x_ = static_cast<int>(x);
+								y_ = static_cast<int>(y);
+								
+								properties_.DecreaseFatigue();
+							}
+							else
+							{
+								reachedAITarget_ = true;
+					
+					
+								// how much are we going to damage the target entity
+								int damage = properties_.GetStrength();
+					
+								// target properties
+								CombatEntityProperties& targetProperties = targetEntity_->GetProperties();
+					
+								// get the target's shield
+								int targetShield = targetProperties.GetShield();
+					
+								// calculate if we will demolish the target's shield
+								int overflow = abs(targetShield - damage);
+					
+								// if we have wiped out the shields
+								if (overflow)
+								{
+									// make sure its zero
+									targetProperties.SetShield(0);
+						
+									// damage the health of the target
+									targetProperties.DecreaseHealth(overflow);
+								}
+								else
+								{
+									// damage the shields of the target
+									targetProperties.DecreaseShield(damage);
+								}
+					
+								// get the target's health
+								int targetHealth = targetProperties.GetHealth();
+					
+								// if the target's health is critical
+								if (targetHealth <= 0)
+								{
+									// we kill it off
+									targetProperties.SetHealth(0);
+									targetEntity_->Neutralize();
+						
+									// advance this commando
+									properties_.IncreaseCombatExperience();
+									properties_.IncreaseStrength();
+									properties_.IncreaseHealth();
+									properties_.IncreaseShield();
+								}
+					
+								// tell the commando to do nothing now
+								this->SetAIAction(AI_DoNothing);
+					
+								// unset the target
+								this->SetTargetEntity(0);
+							}
+						}
+			
+					} break;
+		
+					default: break;
+				} // end switch ai_
+				////////////////////////////////////////////////////////////////
+			} break;
+			
+			case AI_Resting:
+			{
+				properties_.IncreaseFatigue();
+				
+				if (properties_.GetFatigue())
+				{
+					this->SetAIState(AI_Idle);
+				}
+				
+			} break;
+			
+			default: break;
+		} // end switch aiState_
+		
+	} // end if else can take action
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -520,10 +568,40 @@ void Commando::Render(BITMAP* target)
 	int wOver2 = width_ / 2;
 	int hOver2 = height_ / 2;
 	
-	if (AI_DoConvergence == ai_ && !reachedAITarget_)
+	switch(aiState_)
 	{
-		line(target, x_ + wOver2, y_ + hOver2, aiTargetX_ + wOver2, aiTargetY_ + hOver2, makecol(64, 0, 0));
-	}
+		case AI_Idle:
+		{
+			switch(ai_)
+			{
+				case AI_DoEvasion:
+				{
+					if (!reachedAITarget_)
+					{
+						circlefill(target, aiTargetX_ + wOver2, aiTargetY_ + hOver2, 4 + rand() % (16 - 4), makecol(32, 64, 0));
+					}
+				} break;
+		
+				case AI_DoConvergence:
+				{
+					if (!reachedAITarget_)
+					{
+						line(target, x_ + wOver2, y_ + hOver2, aiTargetX_ + wOver2, aiTargetY_ + hOver2, makecol(64, 0, 0));
+					}
+				} break;
+		
+				default: break;
+			} // end switch ai_
+		} break;
+		
+		case AI_Resting:
+		{
+			textprintf_ex(target, font, x_ + wOver2, y_ - text_height(font), makecol(0, 255, 255), -1, "zZ");
+		} break;
+		
+		default: break;
+	
+	} // end switch aiState_
 	
 	rectfill(target, x_, y_, x_ + width_, y_ + height_, color_);
 	
@@ -555,8 +633,11 @@ void Commando::Target(bool targeted)
 void Commando::SetTargetEntity(CombatEntity* targetEntity)
 {
 	CombatEntity::SetTargetEntity(targetEntity);
-	aiTargetX_ = targetEntity->GetX();
-	aiTargetY_ = targetEntity->GetY();
+	if (targetEntity)
+	{
+		aiTargetX_ = targetEntity->GetX();
+		aiTargetY_ = targetEntity->GetY();
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -634,7 +715,7 @@ void Simulator::Update()
 			rollOfTheDice.SetStrength(10 + rand() % (20 - 10));
 			rollOfTheDice.SetHealth(100 + rand() % (200 - 100));
 			rollOfTheDice.SetShield(100 + rand() % (200 - 100));
-			rollOfTheDice.SetFatigue(32 + rand() % (96 - 32));
+			rollOfTheDice.SetFatigue(8 + rand() % (32 - 8));
 			rollOfTheDice.SetRangeOfSight((SCREEN_H / 8) + rand() % ((SCREEN_H / 5) - (SCREEN_H / 8)));
 			nextCommando->GetProperties().Clone(rollOfTheDice);
 			combatEntities_.Push(nextCommando);
@@ -781,17 +862,20 @@ void Simulator::Render(BITMAP* target)
 			// get the ai action of the commando
 			AIActionName ai = commando->GetAIAction();
 			
+			// get the ai state of the commando
+			AISituationStateName aiState = commando->GetAIState();
+			
 			// get the properties of the commando
 			CombatEntityProperties& properties = commando->GetProperties();
 		
 			
 			// create the hud information
-			char hudLines[4][0x80];
+			char hudLines[5][0x80];
 			sprintf(hudLines[0], "Commando %3d @ Pos(%4d, %4d)", static_cast<int>(index) + 1, commando->GetX(), commando->GetY());
-			sprintf(hudLines[1], "AI Action: %s", (AI_DoNothing == ai) ? "Do Nothing" : (AI_DoConvergence) ? "Converge on Target" : "Take Evasive Action");
+			sprintf(hudLines[1], "AI Action: %s", (AI_DoNothing == ai) ? "Do Nothing" : (AI_DoConvergence == ai) ? "Converge on Target" : "Take Evasive Action");
 			sprintf(hudLines[2], "HP: %4d    SH: %4d    STR: %4d    XP: %6d", properties.GetHealth(), properties.GetShield(), properties.GetStrength(), properties.GetCombatExperience());
 			sprintf(hudLines[3], "Has Target? %s  Pos(%4d, %4d)", (targetCommando) ? "YES" : "NO", (targetCommando) ? targetCommando->GetX() : 0, (targetCommando)?targetCommando->GetY() : 0);
-			//sprintf(hudLines[4], "AI State: %s");
+			sprintf(hudLines[4], "AI State: %s F: %4d R: %4d", (AI_Idle == aiState) ? "Idle" : (AI_Resting == aiState) ? "Resting" : "?", properties.GetFatigue(), properties.GetRangeOfSight());
 			
 			// render the commando
 			combatEntities_[index]->Render(target);
@@ -801,16 +885,11 @@ void Simulator::Render(BITMAP* target)
 			textprintf_ex(target, font, hudX, hudY + (txtH + 2), txtC, -1, "%s", hudLines[1]);
 			textprintf_ex(target, font, hudX, hudY + ((txtH * 2) + 4), txtC, -1, "%s", hudLines[2]);
 			textprintf_ex(target, font, hudX, hudY + ((txtH * 3) + 6), txtC, -1, "%s", hudLines[3]);
+			textprintf_ex(target, font, hudX, hudY + ((txtH * 4) + 8), txtC, -1, "%s", hudLines[4]);
 			
 			// update the hude info position
-			hudY += (txtH * 5) + 10;
-			/*
-			textprintf_ex(target, font, hudX, hudY + (txtH * index) + (2 * index), txtC, -1,
-				"Commando %3d : Pos(%4d, %4d) Orders: %s [HP: %4d SH: %4d STR: %4d XP: %d]", 
-				static_cast<int>(index) + 1, commando->GetX(), commando->GetY(),
-				(AI_DoNothing == ai) ? "Do Nothing" : "Converge on Target",
-				properties.GetHealth(), properties.GetShield(), properties.GetStrength(), properties.GetCombatExperience());
-			*/
+			hudY += (txtH * 6) + 12;
+			
 		}
 	}
 	
